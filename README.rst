@@ -75,7 +75,7 @@ HTTP API
 
 - To obtain a list of sources, use ``mopidy.pulseaudio.getSources()``
 - To obtain a list of sinks, use ``mopidy.pulseaudio.getSinks()``
-- To establish a new connection between a source and sink, use``mopidy.pulseaudio.connect()``
+- To establish a new connection between a source and sink, use ``mopidy.pulseaudio.connect()``
     - A unique connection identifier string is returned
 - To remove a connection between a source and sink, use ``mopidy.pulseaudio.disconnect()``
     - A valid connection identifier string should be provided
@@ -102,7 +102,7 @@ v0.2.0 (UNRELEASED)
 - Create networked audio sinks e.g., RTP, TCP
 - Connect to networked audio sinks
 
-v0.1.0
+v0.1.0 (UNRELEASED)
 ----------------------------------------
 
 Supports the following features:

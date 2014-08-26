@@ -206,7 +206,7 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
         for c in self.connections.keys():
             if (self.connections[c]['source'] not in self.sources or
                 self.connections[c]['sink'] not in self.sinks):
-                self.pulse.unload_module(c)
+                self._unload_loopback(c)
 
         # Establish new connections (if any)
         connections = [self.connections[c] for c in self.connections.keys()]
