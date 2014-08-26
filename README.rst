@@ -58,12 +58,30 @@ property set to the same value as configured under ``name`` for pulseaudio.  Not
 creates a sink for mopidy during start-up.
 
 The ``auto_sources`` and ``auto_sinks`` settings allows all named sources to be connected to
-all named sinks.  The configurations are a list with two special values permitted:
+all named sinks automatically without user intervention.  This also handles sources or sinks that
+are connected dynamically, such as bluetooth audio devices.  The configuration parameters are
+a list of source/sink names, with some special values also permitted:
 
 - ``default``: the source/sink selected is the pulseaudio default source/sink
     - note: default source is always the sink monitor connected to mopidy.
-- ``all``: all source/sinks are selected
-    - note: Monitor source/sinks are filtered out
+- ``all``: all sources/sinks are selected
+    - note: monitor sources/sinks are filtered out
+- ``none``: no source/sink is selected
+    - note: manual selection is necessary at all times
+
+
+HTTP API
+--------
+
+- To obtain a list of sources, use ``mopidy.pulseaudio.getSources()``
+- To obtain a list of sinks, use ``mopidy.pulseaudio.getSinks()``
+- To establish a new connection between a source and sink, use``mopidy.pulseaudio.connect()``
+    - A unique connection identifier string is returned
+- To remove a connection between a source and sink, use ``mopidy.pulseaudio.disconnect()``
+    - A valid connection identifier string should be provided
+- To list all established connections, use ``mopidy.pulseaudio.getConnections()``
+- Extension properties may be get/set dynamically using ``getProperty()`` and ``setProperty()``
+respectively.
 
 
 Project resources
@@ -82,6 +100,7 @@ v0.2.0 (UNRELEASED)
 ----------------------------------------
 
 - Create networked audio sinks e.g., RTP, TCP
+- Connect to networked audio sinks
 
 v0.1.0
 ----------------------------------------

@@ -14,9 +14,23 @@ logger = logging.getLogger(__name__)
 PULSEAUDIO_SERVICE_NAME = 'pulseaudio'
 
 
+def api_mutex(f):
+    """
+    This decorator enforces mutual exclusion around API calls
+    which use the underlying pulse object.
+    """
+    def wrapper(*args, **kwargs):
+        self = args[0]
+        self.lock.acquire()
+        r = f(*args, **kwargs)
+        self.lock.release()
+        return r
+    return wrapper
+
+
 class PulseAudioManager(pykka.ThreadingActor, service.Service):
     """
-    PulseAudioManager allows access to a pulseaudio server
+    PulseAudioManager allows access to the local pulseaudio server
     in order to connect to and configure pulseaudio services
     in conjunction with mopidy.
 
@@ -33,15 +47,19 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
     """
     name = PULSEAUDIO_SERVICE_NAME
     public = True
-    sources = {}
-    sinks = {}
     event_sources = {}
-    refresh = 1
+    sources = []
+    sinks = []
+    refresh = 1   # Period given in seconds and may be a float
     pulse = None
 
     def __init__(self, config, core):
         super(PulseAudioManager, self).__init__()
         self.config = dict(config['pulseaudio'])
+        # PulseAudio is not thread-safe so we must prevent overlapped
+        # calls by locking around the functions -- care is taken
+        # to ensure deadlock does not arise
+        self.lock = threading.Lock()
 
     def _deregister_event_source(self, source):
         tag = self.event_sources.pop(source, None)
@@ -58,8 +76,10 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
         self.event_sources['timeout'] = tag
 
     def _refresh_timeout_callback(self):
+        # We can't block here, so we test first and only proceed
+        # if the lock was acquired in non-blocking mode
         if (not self.lock.acquire(False)):
-            return False
+            return True    # Re-arm the timer for a retry
         self._refresh_sources()
         self._refresh_sinks()
         self._refresh_connections()
@@ -104,38 +124,43 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
         # Do not allow the same connection to be established more than once
         for index in self.connections.keys():
             if (self.connections[index] == connection):
-                return index
+                return 'mopidy-' + str(index)
         index = self.pulse.load_module('module-loopback', connection).pop()
-        self.connections[index] = connection
-        return index
+        conn = 'mopidy-' + str(index)
+        self.connections[conn] = connection
+        return conn
+
+    def _unload_loopback(self, connection):
+        conn = self.connections.pop(connection, None)
+        if (conn):
+            index = int(connection.replace('mopidy-', ''))
+            self.pulse.unload_module(index)
 
     def _refresh_sinks(self):
         sinks = self.pulse.get_sink_info_list()
         sink_names = [s['name'] for s in sinks]
         for s in sinks:
             if (s['name'] not in self.sinks):
-                self.sinks[s['name']] = s
                 service.ServiceListener.send('pulseaudio_sink_added', service=self.name,
-                                             sink=s)
-        for s in self.sinks.keys():
+                                             sink=s['name'])
+        for s in self.sinks:
             if (s not in sink_names):
-                k = self.sinks.pop(s)
                 service.ServiceListener.send('pulseaudio_sink_removed', service=self.name,
-                                             sink=k)
+                                             sink=s)
+        self.sinks = sink_names
 
     def _refresh_sources(self):
         sources = self.pulse.get_source_info_list()
         source_names = [s['name'] for s in sources]
         for s in sources:
             if (s['name'] not in self.sources):
-                self.sources[s['name']] = s
                 service.ServiceListener.send('pulseaudio_source_added', service=self.name,
-                                             source=s)
-        for s in self.sources.keys():
+                                             source=s['name'])
+        for s in self.sources:
             if (s not in source_names):
-                k = self.sources.pop(s)
                 service.ServiceListener.send('pulseaudio_source_removed', service=self.name,
-                                             source=k)
+                                             source=s)
+        self.sources = source_names
 
     def _scan_and_activate_bluetooth_a2dp(self):
         cards = self.pulse.get_card_info_list()
@@ -149,14 +174,16 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
         modules = self.pulse.get_module_info_list()
         for m in modules:
             if (m['name'] == 'module-loopback'):
-                self.connections[m['index']] = m['argument']
+                self.connections['mopidy-' + str(m['index'])] = m['argument']
 
     def _refresh_auto_connections(self):
-
         # Build the auto-connection list of sources and sinks
         sources_config = []
         for i in self.config['auto_sources']:
-            if (i == 'default'):
+            if (i == 'none'):
+                sources_config = []
+                break
+            elif (i == 'default'):
                 sources_config.append(self.pulse.get_server_info().pop()['default_source_name'])
             elif (i == 'all'):
                 sources_config.extend([k for k in self.sources if 'monitor' not in k])
@@ -165,21 +192,24 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
                 sources_config.append(i)
         sinks_config = []
         for i in self.config['auto_sinks']:
-            if (i == 'default'):
+            if (i == 'none'):
+                sinks_config = []
+                break
+            elif (i == 'default'):
                 sinks_config.append(self.pulse.get_server_info().pop()['default_sink_name'])
             elif (i == 'all'):
                 sinks_config.extend([k for k in self.sinks if k != self.config['name']])
             else:
-                sources_config.append(i)
+                sinks_config.append(i)
 
         # Clean-up any stale connections
-        for c in self.connections:
+        for c in self.connections.keys():
             if (self.connections[c]['source'] not in self.sources or
                 self.connections[c]['sink'] not in self.sinks):
                 self.pulse.unload_module(c)
 
         # Establish new connections (if any)
-        connections = [self.connections[c] for c in self.connections]
+        connections = [self.connections[c] for c in self.connections.keys()]
         for i in sources_config:
             for j in sinks_config:
                 if ({'source': i, 'sink': j} not in connections):
@@ -193,7 +223,6 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
         if (self.pulse):
             return
 
-        self.lock = threading.Lock()
         self.pulse = pypulseaudio.PulseAudio(app_name=self.config['name'])
         self.pulse.connect()
         self._load_null_sink()
@@ -207,10 +236,6 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
 
         # Initiate refresh timer
         self._refresh_timeout_callback()
-        
-        # Scan for any existing source/sink connections and
-        # establish default source/sink connection
-        self.connect()
 
     @private_method
     def on_stop(self):
@@ -220,8 +245,10 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
         if (not self.pulse):
             return
         self._deregister_event_sources()
-        for c in self.connections:
-            self.disconnect(c)
+        self.lock.acquire()
+        for c in self.connections.keys():
+            self._unload_loopback(c)
+        self.lock.release()
         self.pulse.disconnect()
 
         # Notify listeners
@@ -240,6 +267,11 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
         return pykka.ThreadingActor.stop(self, *args, **kwargs)
 
     def set_property(self, name, value):
+        """
+        Set a property by name/value.  The property setting is
+        not persistent and will force the extension to be
+        restarted.
+        """
         if (name in self.config):
             self.config[name] = value
             service.ServiceListener.send('service_property_changed',
@@ -249,6 +281,10 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
             self.on_start()
 
     def get_property(self, name):
+        """
+        Get a property by name.  If name is ``None`` then
+        the entire property dictionary is returned.
+        """
         if (name is None):
             return self.config
         else:
@@ -262,67 +298,79 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
         """
         Enable the service
         """
-        if (self.pulse is None):
-            self.on_start()
-        logger.info('PulseAudioManager enabled')
+        self.on_start()
 
     def disable(self):
         """
         Disable the service
         """
-        if (self.pulse):
-            self.on_stop()
-        logger.info('PulseAudioManager disabled')
+        self.on_stop()
 
+    @api_mutex
     def get_sources(self):
         """
         Get a list of audio sources.
-        """
-        self.lock.acquire()
-        sources = [i['name'] for i in self.pulse.get_source_info_list()]
-        self.lock.release()
-        return sources
 
+        :return: list of audio source names.
+        :rtype: list of strings
+        """
+        return [i['name'] for i in self.pulse.get_source_info_list()]
+
+    @api_mutex
     def get_sinks(self):
         """
         Get a list of audio sinks.
-        """
-        self.lock.acquire()
-        sinks = [i['name'] for i in self.pulse.get_sink_info_list()]
-        self.lock.release()
-        return sinks
 
+        :return: list of audio sink names.
+        :rtype: list of strings
+        """
+        return [i['name'] for i in self.pulse.get_sink_info_list()]
+
+    @api_mutex
     def connect(self, source=None, sink=None):
         """
-        Establish a new source/sink connection
-        
-        :param source: source name or use mopidy.monitor source if None
+        Establish a new source/sink connection manually.
+
+        :param source: source name or use ``mopidy.monitor`` source if ``None``
         :type source: None or string
-        :param sink: sink name or use default system sink if None
+        :param sink: sink name or use default sink if ``None``
         :type sink: None or string
-        :return: unique connection identifier
-        :rtype: integer
+        :return: unique connection identifier of form ``mopidy-xxx``
+        :rtype: string
         """
         if (source is None):
             source = self.config['name'] + '.monitor'
         if (sink is None):
             sink = self.pulse.get_server_info().pop()['default_sink_name']
-        self.lock.acquire()
-        index = self._load_loopback(source, sink)
-        self.lock.release()
-        return index
+        return self._load_loopback(source, sink)
 
+    @api_mutex
     def get_connections(self):
         """
-        Return a dict of existing connections.
+        Return existing connections.
+
+        .. note:: This will also include automatically established
+            connections.
+
+        :return: a dictionary of connections 
+        :rtype: dictionary of dictionaries keyed by a connection identifier
+            to a source/sink dictionary. e.g.,
+            ``{ 'mopidy-23': { 'source': 'my_source', 'sink': 'my_sink' } }``
         """
         return self.connections
 
+    @api_mutex
     def disconnect(self, connection):
         """
-        Remove an existing source/sink connection
+        Remove an existing source/sink connection by its connection
+        identifier.
+
+        .. warning:: Attempting to disconnect automatically established
+            connections will not work, since they will be established
+            again.  You must first remove the respective source/sink
+            from the ``auto_source`` and ``auto_sink`` properties.
+
+        :param connection: connection identifier
+        :type connection: a string of the form ``mopidy-xxx``
         """
-        self.connections.pop(connection)
-        self.lock.acquire()
-        self.pulse.unload_module(connection)
-        self.lock.release()
+        self._unload_loopback(connection)
