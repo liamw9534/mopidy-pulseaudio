@@ -126,9 +126,10 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
             if (self.connections[index] == connection):
                 return 'mopidy-' + str(index)
         index = self.pulse.load_module('module-loopback', connection).pop()
-        conn = 'mopidy-' + str(index)
-        self.connections[conn] = connection
-        return conn
+        if (index >= 0):
+            conn = 'mopidy-' + str(index)
+            self.connections[conn] = connection
+            return conn
 
     def _unload_loopback(self, connection):
         conn = self.connections.pop(connection, None)
@@ -166,8 +167,13 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
         cards = self.pulse.get_card_info_list()
         for c in cards:
             for p in c['profiles']:
+                # 'a2dp' profile is used for both source and sink in PulseAudio 2.0
+                # However, since PulseAudio 4.0 'a2dp' is used for sink only and a new
+                # profile called 'a2dp_source' is introduced
                 if (p['name'] == 'a2dp' and c['active_profile'] != 'a2dp'):
                     self.pulse.set_card_profile_by_name(c['name'], 'a2dp')
+                elif (p['name'] == 'a2dp_source' and c['active_profile'] != 'a2dp_source'):
+                    self.pulse.set_card_profile_by_name(c['name'], 'a2dp_source')
 
     def _refresh_connections(self):
         self.connections = {}
