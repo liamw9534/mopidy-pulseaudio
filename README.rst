@@ -37,7 +37,20 @@ Configuration
 PulseAudio
 -----------
 
-For bluetooth support ensure the module ``module-bluetooth-discover`` is loaded.
+There are several configuration files used by PulseAudio normally located under
+``/etc/pulse``.  The following settings should be present:
+
+``daemon.conf``::
+
+    daemonize = yes
+    allow-exit = no
+    exit-idle-time = -1
+    ; This must be set for embedded hardware like Raspberry Pi
+    resample-method = trivial
+    default-sample-rate = 44100
+
+For bluetooth support ensure the module ``module-bluetooth-discover`` is also loaded
+as part of ``default.pa`` file.
 
 Extension
 ---------
