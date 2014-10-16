@@ -118,8 +118,7 @@ Changelog
 v0.2.0 (NOT IMPLEMENTED)
 ----------------------------------------
 
-- Create networked audio sinks e.g., RTP, TCP (initial investigation
-suggests that that jitter buffer support is not very good).
+- Create networked audio sinks e.g., RTP, TCP (initial investigation suggests that that jitter buffer support is not very good).
 - Connect to networked audio sinks
 
 v0.1.0 (PENDING RELEASE)
