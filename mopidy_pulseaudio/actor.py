@@ -5,6 +5,7 @@ import pykka
 import pypulseaudio
 import gobject
 import threading
+from .sink import PulseAudioSink
 
 from mopidy import service
 from mopidy.utils.jsonrpc import private_method
@@ -55,11 +56,12 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
 
     def __init__(self, config, core):
         super(PulseAudioManager, self).__init__()
-        self.config = dict(config['pulseaudio'])
+        self.config = config['pulseaudio']
         # PulseAudio is not thread-safe so we must prevent overlapped
         # calls by locking around the functions -- care is taken
         # to ensure deadlock does not arise
         self.lock = threading.Lock()
+        self.core = core
 
     def _deregister_event_source(self, source):
         tag = self.event_sources.pop(source, None)
@@ -221,6 +223,10 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
                 if ({'source': i, 'sink': j} not in connections):
                     self._load_loopback(i, j)
 
+    @staticmethod
+    def _audio_sink_name(device):
+        return PULSEAUDIO_SERVICE_NAME + ':audio:' + device
+
     @private_method
     def on_start(self):
         """
@@ -234,6 +240,11 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
         self._load_null_sink()
         self._load_bluetooth()
         self._load_zeroconf()
+
+        # Connect 'pulsesink' to audio output tee
+        if (self.config['attach_audio_sink']):
+            self.core.add_audio_sink(PulseAudioManager._audio_sink_name(self.config['name']),
+                                     PulseAudioSink(self.config['name']))
 
         # Notify listeners
         self.state = service.ServiceState.SERVICE_STATE_STARTED
@@ -250,6 +261,11 @@ class PulseAudioManager(pykka.ThreadingActor, service.Service):
         """
         if (not self.pulse):
             return
+
+        # Remove 'pulsesink' from audio output tee
+        if (self.config['attach_audio_sink']):
+            self.core.remove_audio_sink(PulseAudioManager._audio_sink_name(self.config['name']))
+
         self._deregister_event_sources()
         self.lock.acquire()
         for c in self.connections.keys():

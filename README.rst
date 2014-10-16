@@ -65,10 +65,16 @@ Add the following section to your Mopidy configuration file following installati
     name = mopidy
     auto_sources = default
     auto_sinks = default
+    attach_audio_sink = false
 
-The audio configuration option ``output`` must be configured for ``pulsesink`` with the ``device``
-property set to the same value as configured under ``name`` for pulseaudio.  Note that the pulseaudio extension
-creates a sink for mopidy during start-up.
+
+If ``attach_audio_sink`` is ``true`` then this extension will use the (presently on a branch) dynamic
+audio configuration feature for adding a ``pulsesink`` to the audio output tee.  Otherwise, it is
+assumed that the user has configured their ``output`` - in this instance, ``output`` should be configured
+for ``pulsesink`` with the ``device`` property set to the same value as configured under ``name``
+for pulseaudio.
+
+Note that this extension creates a "null" sink within pulseaudio for mopidy to use during start-up.
 
 The ``auto_sources`` and ``auto_sinks`` settings allows all named sources to be connected to
 all named sinks automatically without user intervention.  This also handles sources or sinks that
@@ -109,13 +115,14 @@ Changelog
 =========
 
 
-v0.2.0 (UNRELEASED)
+v0.2.0 (NOT IMPLEMENTED)
 ----------------------------------------
 
-- Create networked audio sinks e.g., RTP, TCP
+- Create networked audio sinks e.g., RTP, TCP (initial investigation
+suggests that that jitter buffer support is not very good).
 - Connect to networked audio sinks
 
-v0.1.0 (UNRELEASED)
+v0.1.0 (PENDING RELEASE)
 ----------------------------------------
 
 Supports the following features:

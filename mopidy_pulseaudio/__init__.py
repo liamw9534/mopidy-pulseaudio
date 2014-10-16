@@ -22,6 +22,7 @@ class Extension(ext.Extension):
         schema['name'] = config.String()
         schema['auto_sources'] = config.List()
         schema['auto_sinks'] = config.List()
+        schema['attach_audio_sink'] = config.Boolean()
         return schema
 
     def validate_environment(self):
